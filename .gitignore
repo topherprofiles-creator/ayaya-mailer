@@ -1,0 +1,14 @@
+# Local database, encryption key and everything the user uploads
+data/
+uploads/lists/*
+uploads/attachments/*
+!uploads/lists/.gitkeep
+!uploads/attachments/.gitkeep
+
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.vscode/
+*.log

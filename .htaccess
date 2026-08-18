@@ -1,0 +1,27 @@
+# Ayaya Mailer - Apache config for XAMPP
+
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # Block direct web access to internals
+    RewriteRule ^(data|includes|lib)/ - [F,L]
+</IfModule>
+
+<FilesMatch "\.(sqlite|sqlite-wal|sqlite-shm|key|md|log)$">
+    Require all denied
+</FilesMatch>
+
+# Bigger uploads + no timeout while a batch is sending (mod_php only;
+# harmless if your PHP runs as FPM/CGI - the app also sets these at runtime).
+<IfModule mod_php.c>
+    php_value upload_max_filesize 32M
+    php_value post_max_size 40M
+    php_value max_execution_time 0
+</IfModule>
+<IfModule mod_php7.c>
+    php_value upload_max_filesize 32M
+    php_value post_max_size 40M
+    php_value max_execution_time 0
+</IfModule>
