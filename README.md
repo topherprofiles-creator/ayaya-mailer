@@ -106,31 +106,20 @@ by OpenAI separately from a ChatGPT subscription.
 
 Ayaya can import public business websites and email addresses from the local
 [gosom/google-maps-scraper](https://github.com/gosom/google-maps-scraper) service.
-The scraper is not bundled with Ayaya and remains local to your computer.
+On Windows, Ayaya downloads and SHA-256 verifies the scraper automatically into
+its ignored `data/` folder, so no separate repository or Docker installation is
+needed.
 
-1. Install [Git for Windows](https://git-scm.com/download/win), then clone the
-   scraper repository:
+1. Open **Google Maps** in Ayaya and click **Install and start scraper
+   automatically**. The first setup downloads about 60 MB and starts the local
+   API on `http://127.0.0.1:8088`.
 
-   ```powershell
-   cd C:\tools
-   git clone https://github.com/gosom/google-maps-scraper.git
-   cd google-maps-scraper
-   ```
-
-2. Download the latest Windows release from the repository's Releases page and
-   start its Web UI on Ayaya's default port:
-
-   ```powershell
-   .\google_maps_scraper.exe -web -addr 127.0.0.1:8088 -data-folder gmapsdata
-   ```
-
-   Docker is also supported by the scraper project. Keep the service running
-   while searching from **Google Maps** in Ayaya.
-
-3. Open `http://localhost/ayaya-mailer/maps.php`. The default scraper URL is
-   `http://127.0.0.1:8088`; change it in the page if you use another port.
-4. Enter focused searches such as `media companies in Ajao Estate Lagos
+2. Enter focused searches such as `media companies in Ajao Estate Lagos
    Nigeria`, start a scrape, wait for it to finish, and import the results.
+
+If automatic setup is unavailable, the Google Maps page includes manual binary
+and Docker instructions. The scraper project is MIT licensed and runs only on
+your computer; Ayaya does not send searches or emails automatically.
 
 Only rows with a valid website and public email are imported. Placeholder
 addresses are discarded, duplicates are skipped, and imported Maps leads stay

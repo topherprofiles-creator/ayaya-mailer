@@ -17,6 +17,155 @@ function maps_api_url(): string
     return rtrim($url, '/');
 }
 
+function maps_managed_dir(): string
+{
+    $dir = AYAYA_DATA . '/maps-scraper';
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0777, true);
+    }
+    return $dir;
+}
+
+function maps_managed_binary(): string
+{
+    return maps_managed_dir() . '/google_maps_scraper.exe';
+}
+
+/** @return array{installed:bool,running:bool,path:string} */
+function maps_managed_status(): array
+{
+    $running = maps_api_health()['ok'];
+    return [
+        'installed' => is_file(maps_managed_binary()),
+        'running' => $running,
+        'path' => maps_managed_binary(),
+    ];
+}
+
+/** @return array{ok:bool,json:array,error:string} */
+function maps_github_json(string $url): array
+{
+    if (!function_exists('curl_init')) {
+        return ['ok' => false, 'json' => [], 'error' => 'PHP cURL is required for automatic scraper setup.'];
+    }
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_HTTPHEADER => ['Accept: application/vnd.github+json', 'User-Agent: Ayaya-Mailer'],
+    ]);
+    $body = curl_exec($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = (string) curl_error($ch);
+    curl_close($ch);
+    $json = is_string($body) ? json_decode($body, true) : null;
+    if ($status < 200 || $status >= 300 || !is_array($json)) {
+        return ['ok' => false, 'json' => [], 'error' => $error !== '' ? $error : 'Could not read the latest Google Maps scraper release.'];
+    }
+    return ['ok' => true, 'json' => $json, 'error' => ''];
+}
+
+function maps_download_release(string $url, string $destination): string
+{
+    if (!function_exists('curl_init')) {
+        return 'PHP cURL is required for automatic scraper setup.';
+    }
+    $temporary = $destination . '.download';
+    $stream = @fopen($temporary, 'wb');
+    if ($stream === false) {
+        return 'Ayaya could not create its local scraper download file.';
+    }
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_FILE => $stream,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_TIMEOUT => 300,
+        CURLOPT_HTTPHEADER => ['Accept: application/octet-stream', 'User-Agent: Ayaya-Mailer'],
+    ]);
+    $ok = curl_exec($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = (string) curl_error($ch);
+    curl_close($ch);
+    fclose($stream);
+    if ($ok === false || $status < 200 || $status >= 300) {
+        @unlink($temporary);
+        return $error !== '' ? $error : 'The scraper release download failed.';
+    }
+    if (!@rename($temporary, $destination)) {
+        @unlink($temporary);
+        return 'Ayaya could not save the downloaded scraper.';
+    }
+    return '';
+}
+
+function maps_windows_arg(string $value): string
+{
+    return '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $value) . '"';
+}
+
+/** @return array{ok:bool,message:string,error:string} */
+function maps_install_local_scraper(): array
+{
+    if (maps_api_health()['ok']) {
+        return ['ok' => true, 'message' => 'Google Maps scraper is already running.', 'error' => ''];
+    }
+    if (PHP_OS_FAMILY !== 'Windows') {
+        return ['ok' => false, 'message' => '', 'error' => 'Automatic scraper setup currently supports Windows XAMPP. Use the Docker instructions for macOS or Linux.'];
+    }
+
+    $binary = maps_managed_binary();
+    if (!is_file($binary)) {
+        $release = maps_github_json('https://api.github.com/repos/gosom/google-maps-scraper/releases/latest');
+        if (!$release['ok']) {
+            return ['ok' => false, 'message' => '', 'error' => $release['error']];
+        }
+        $asset = null;
+        foreach ((array) ($release['json']['assets'] ?? []) as $candidate) {
+            $name = strtolower((string) ($candidate['name'] ?? ''));
+            if (strpos($name, 'windows-amd64') !== false && substr($name, -4) === '.exe') {
+                $asset = $candidate;
+                break;
+            }
+        }
+        if (!is_array($asset)) {
+            return ['ok' => false, 'message' => '', 'error' => 'No Windows scraper release was found.'];
+        }
+        $error = maps_download_release((string) ($asset['browser_download_url'] ?? ''), $binary);
+        if ($error !== '') {
+            return ['ok' => false, 'message' => '', 'error' => $error];
+        }
+        $digest = (string) ($asset['digest'] ?? '');
+        $expected = preg_replace('/^sha256:/i', '', $digest) ?: '';
+        $actual = is_file($binary) ? hash_file('sha256', $binary) : false;
+        if ($expected === '' || !is_string($actual) || !hash_equals(strtolower($expected), strtolower($actual))) {
+            @unlink($binary);
+            return ['ok' => false, 'message' => '', 'error' => 'The downloaded scraper failed its SHA-256 verification.'];
+        }
+    }
+
+    $dataFolder = maps_managed_dir() . '/gmapsdata';
+    if (!is_dir($dataFolder)) {
+        @mkdir($dataFolder, 0777, true);
+    }
+    setting_set('maps_api_url', 'http://127.0.0.1:8088');
+    $command = 'start "" /B ' . maps_windows_arg($binary)
+        . ' -web -addr 127.0.0.1:8088 -data-folder ' . maps_windows_arg($dataFolder)
+        . ' >NUL 2>&1';
+    $process = @popen($command, 'r');
+    if (is_resource($process)) {
+        pclose($process);
+    }
+    for ($attempt = 0; $attempt < 12; $attempt++) {
+        usleep(500000);
+        if (maps_api_health()['ok']) {
+            return ['ok' => true, 'message' => 'Google Maps scraper installed and started automatically.', 'error' => ''];
+        }
+    }
+    return ['ok' => false, 'message' => '', 'error' => 'The scraper was downloaded, but its local API did not become ready. Try Start scraper again or check Windows security prompts.'];
+}
+
 /** @return array{ok:bool,status:int,body:string,json:mixed,error:string} */
 function maps_http_request(string $method, string $path, ?array $payload = null, bool $raw = false): array
 {
