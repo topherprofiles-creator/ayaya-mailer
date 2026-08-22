@@ -20,6 +20,106 @@
     });
   }
 
+  /* --------------------------------------------- Google Maps lead importer */
+
+  var mapsTool = document.getElementById('maps-tool');
+  if (mapsTool) {
+    var mapsNotice = document.getElementById('maps-result');
+    var mapsStartStatus = document.getElementById('maps-start-status');
+
+    function mapsShow(message, type) {
+      if (!mapsNotice) return;
+      mapsNotice.className = 'alert alert-' + (type || 'info');
+      mapsNotice.textContent = message;
+      mapsNotice.style.display = 'block';
+    }
+
+    function mapsStatus(row, status) {
+      if (!row) return;
+      status = String(status || 'unknown').toLowerCase();
+      var badge = row.querySelector('[data-job-status]');
+      var importBtn = row.querySelector('[data-maps-import]');
+      if (badge) {
+        badge.className = 'badge ' + (status === 'ok' ? 'badge-ok' : (status === 'failed' ? 'badge-bad' : 'badge-warn'));
+        badge.textContent = status;
+      }
+      if (importBtn) importBtn.disabled = status !== 'ok';
+    }
+
+    function mapsCheck(jobId) {
+      var row = document.querySelector('[data-job-row="' + CSS.escape(jobId) + '"]');
+      return api('maps_job', { job_id: jobId }).then(function (res) {
+        if (!res.ok) throw new Error(res.error || 'Could not read scraper job.');
+        var job = res.job || {};
+        mapsStatus(row, job.Status || job.status);
+        return job;
+      });
+    }
+
+    var mapsStartForm = document.getElementById('maps-start-form');
+    if (mapsStartForm) mapsStartForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var button = mapsStartForm.querySelector('button[type=submit]');
+      var data = new FormData(mapsStartForm);
+      if (button) { button.disabled = true; button.textContent = 'Starting...'; }
+      if (mapsStartStatus) mapsStartStatus.textContent = 'Creating a scraper job...';
+      api('maps_start', {
+        name: data.get('name') || '',
+        keywords: data.get('keywords') || '',
+        max_time: data.get('max_time') || '600'
+      }).then(function (res) {
+        if (!res.ok) throw new Error(res.error || 'Could not start the scraper.');
+        if (mapsStartStatus) mapsStartStatus.textContent = 'Job started: ' + res.job_id;
+        window.setTimeout(function () { window.location.reload(); }, 500);
+      }).catch(function (err) {
+        if (mapsStartStatus) mapsStartStatus.textContent = err.message;
+        if (button) { button.disabled = false; button.textContent = 'Start scrape'; }
+      });
+    });
+
+    document.querySelectorAll('[data-maps-job]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var jobId = button.getAttribute('data-maps-job');
+        button.disabled = true;
+        button.textContent = 'Checking...';
+        mapsCheck(jobId).catch(function (err) { mapsShow(err.message, 'error'); })
+          .then(function () { button.disabled = false; button.textContent = 'Check'; });
+      });
+    });
+
+    document.querySelectorAll('[data-maps-import]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var jobId = button.getAttribute('data-maps-import');
+        if (!window.confirm('Import public-email businesses from this completed Google Maps job into the Lead Finder review queue?')) return;
+        button.disabled = true;
+        button.textContent = 'Importing...';
+        api('maps_import', { job_id: jobId }).then(function (res) {
+          if (!res.ok) throw new Error(res.error || 'Import failed.');
+          mapsShow('Imported ' + res.added + ' lead(s); skipped ' + res.skipped + ' row(s) (' + (res.missing_email || 0) + ' without public email, ' + (res.missing_website || 0) + ' without website) and ' + res.duplicates + ' duplicate(s).', 'success');
+          button.textContent = 'Imported';
+        }).catch(function (err) {
+          mapsShow(err.message, 'error');
+          button.disabled = false;
+          button.textContent = 'Import leads';
+        });
+      });
+    });
+
+    var refreshMaps = document.getElementById('maps-refresh');
+    if (refreshMaps) refreshMaps.addEventListener('click', function () { window.location.reload(); });
+
+    // Keep pending jobs current without starting or importing anything.
+    window.setInterval(function () {
+      document.querySelectorAll('[data-job-row]').forEach(function (row) {
+        var badge = row.querySelector('[data-job-status]');
+        var status = badge ? badge.textContent.toLowerCase() : '';
+        if (status === 'pending' || status === 'working') {
+          mapsCheck(row.getAttribute('data-job-row')).catch(function () {});
+        }
+      });
+    }, 10000);
+  }
+
   /* ------------------------------------------------ generic behaviours */
 
   document.addEventListener('click', function (ev) {
@@ -80,6 +180,24 @@
         btn.disabled = false;
         btn.textContent = label;
       });
+    });
+  });
+
+  document.querySelectorAll('[data-test-imap]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var id = btn.getAttribute('data-test-imap');
+      var out = document.getElementById('smtp-test-result');
+      var label = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Testing...';
+      if (out) { out.className = 'alert alert-info'; out.textContent = 'Connecting to the inbox...'; out.style.display = 'block'; }
+      api('test_imap', { id: id }).then(function (res) {
+        if (out) { out.className = 'alert ' + (res.ok ? 'alert-success' : 'alert-error'); out.textContent = res.message; }
+        var dot = document.querySelector('[data-imap-status="' + id + '"]');
+        if (dot) { dot.className = 'badge ' + (res.ok ? 'badge-ok' : 'badge-bad'); dot.textContent = res.ok ? 'IMAP ready' : 'IMAP failed'; }
+      }).catch(function (err) {
+        if (out) { out.className = 'alert alert-error'; out.textContent = err.message; }
+      }).then(function () { btn.disabled = false; btn.textContent = label; });
     });
   });
 

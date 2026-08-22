@@ -16,7 +16,8 @@ define('AYAYA_UPLOADS', AYAYA_ROOT . '/uploads');
 define('AYAYA_VERSION', '1.0.0');
 
 mb_internal_encoding('UTF-8');
-date_default_timezone_set(@date_default_timezone_get() ?: 'UTC');
+// Persist timestamps as UTC. Display helpers convert them to local time.
+date_default_timezone_set('UTC');
 
 // Long campaigns: never let PHP kill a send batch halfway through.
 @set_time_limit(0);

@@ -239,3 +239,38 @@ td.wrap, th.wrap { white-space: normal; }
 .grid-stats { grid-template-columns: repeat(auto-fit, minmax(126px, 1fr)); }
 .grid-stats .value { font-size: 22px; }
 .row.tight > * { flex: 0 0 auto; }
+
+/* --------------------------------------------------------- Lead Finder */
+
+.lead-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; }
+.lead-card {
+  background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 17px; min-width: 0;
+}
+.lead-card h3 { margin: 0 0 2px; font-size: 16px; }
+.lead-score {
+  display: inline-grid; place-items: center; min-width: 38px; height: 30px; margin-right: 6px;
+  border-radius: 9px; background: rgba(139,92,246,.16); color: #d8ccff; font-weight: 750;
+}
+.lead-meta { display: grid; gap: 7px; font-size: 12.5px; overflow-wrap: anywhere; }
+.lead-meta > div { white-space: normal; }
+.lead-meta span {
+  display: inline-block; min-width: 94px; margin-right: 6px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .45px; font-size: 10.5px;
+}
+.send-lead-form { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 560px) {
+  .lead-grid { grid-template-columns: 1fr; }
+}
+
+/* -------------------------------------------------------------- inbox */
+.inbox-layout { display:grid; grid-template-columns:minmax(320px, .8fr) minmax(420px, 1.2fr); gap:20px; align-items:start; }
+.inbox-list-panel { padding:12px; }
+.inbox-row { display:block; padding:12px; border:1px solid transparent; border-bottom-color:var(--line); color:var(--text); text-decoration:none; border-radius:9px; }
+.inbox-row:hover,.inbox-row.selected { background:rgba(139,92,246,.09); border-color:rgba(139,92,246,.25); text-decoration:none; }
+.inbox-row.unread { border-left:3px solid var(--accent-2); background:rgba(236,72,153,.055); }
+.inbox-row.unread strong,.inbox-row.unread .inbox-subject { font-weight:750; }
+.inbox-subject { margin:4px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.inbox-reader { min-height:420px; }
+.inbox-body { margin-top:20px; padding:18px; border:1px solid var(--line); border-radius:10px; background:var(--bg-soft); line-height:1.65; overflow-wrap:anywhere; }
+@media (max-width:980px) { .inbox-layout { grid-template-columns:1fr; } }

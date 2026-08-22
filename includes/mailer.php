@@ -23,8 +23,14 @@ function smtp_get(int $id): ?array
     if ($row === false) {
         return null;
     }
-    $row['password'] = decrypt_secret((string) $row['password']);
-    return $row;
+    return smtp_decrypt_account($row);
+}
+
+/** Convert a database SMTP row into a mailer-ready account. */
+function smtp_decrypt_account(array $account): array
+{
+    $account['password'] = decrypt_secret((string) ($account['password'] ?? ''));
+    return $account;
 }
 
 function smtp_all(bool $activeOnly = false): array
@@ -87,7 +93,7 @@ function mailer_build(array $account, bool $keepAlive = true): PHPMailer
 /**
  * Send one message through an already-built mailer.
  *
- * @return array{ok: bool, error: string}
+ * @return array{ok: bool, error: string, message_id?: string}
  */
 function mailer_send_one(PHPMailer $mail, array $contact, string $subject, string $body, bool $isHtml, array $attachments = []): array
 {
@@ -117,7 +123,7 @@ function mailer_send_one(PHPMailer $mail, array $contact, string $subject, strin
         }
 
         $mail->send();
-        return ['ok' => true, 'error' => ''];
+        return ['ok' => true, 'error' => '', 'message_id' => (string) $mail->getLastMessageID()];
     } catch (MailException $e) {
         return ['ok' => false, 'error' => trim($mail->ErrorInfo) !== '' ? $mail->ErrorInfo : $e->getMessage()];
     } catch (Throwable $e) {

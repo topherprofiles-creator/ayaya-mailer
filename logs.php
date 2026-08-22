@@ -10,7 +10,7 @@ $status     = (string) query('status', '');
 $campaignId = (int) query('campaign', 0);
 $search     = trim((string) query('q', ''));
 
-$where  = ["q.status != 'pending'"];
+$where  = ["q.status IN ('sent','failed')"];
 $params = [];
 
 if (in_array($status, ['sent', 'failed'], true)) {
@@ -27,20 +27,35 @@ if ($search !== '') {
 }
 $whereSql = 'WHERE ' . implode(' AND ', $where);
 
+/* Campaign recipients and individually sent Lead Finder emails share one log view. */
+$logEntriesSql = "WITH log_entries AS (
+    SELECT 'campaign' AS source, q.id, q.email, q.name, q.status, q.error,
+           q.smtp_id, q.sent_at, q.campaign_id, c.name AS campaign
+    FROM campaign_queue q
+    JOIN campaigns c ON c.id=q.campaign_id
+    UNION ALL
+    SELECT 'lead' AS source, l.id, l.email, l.contact_name AS name,
+           CASE WHEN l.status='sent' THEN 'sent' ELSE 'failed' END AS status,
+           l.last_error AS error, l.smtp_id, COALESCE(l.sent_at,l.updated_at) AS sent_at,
+           NULL AS campaign_id, 'Lead Finder - ' || l.business_name AS campaign
+    FROM outreach_leads l
+    WHERE l.status='sent' OR l.last_error<>''
+)";
+
 /* CSV export of the current filter */
 if (query('export') === 'csv') {
-    $sql = "SELECT q.email, q.name, q.status, q.error, q.sent_at, c.name AS campaign, s.label AS smtp
-            FROM campaign_queue q
-            LEFT JOIN campaigns c ON c.id = q.campaign_id
+    $sql = "$logEntriesSql
+            SELECT q.email, q.name, q.status, q.error, q.sent_at, q.campaign, s.label AS smtp, q.source
+            FROM log_entries q
             LEFT JOIN smtp_accounts s ON s.id = q.smtp_id
-            $whereSql ORDER BY q.id DESC";
+            $whereSql ORDER BY q.sent_at DESC,q.id DESC";
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
 
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="ayaya-logs-' . date('Ymd-His') . '.csv"');
     $out = fopen('php://output', 'w');
-    fputcsv($out, ['email', 'name', 'status', 'error', 'sent_at', 'campaign', 'smtp']);
+    fputcsv($out, ['email', 'name', 'status', 'error', 'sent_at', 'campaign', 'smtp', 'source']);
     while ($row = $stmt->fetch()) {
         fputcsv($out, $row);
     }
@@ -52,16 +67,16 @@ $perPage = 60;
 $page    = max(1, (int) query('page', 1));
 $offset  = ($page - 1) * $perPage;
 
-$countStmt = $pdo->prepare("SELECT COUNT(*) c FROM campaign_queue q $whereSql");
+$countStmt = $pdo->prepare("$logEntriesSql SELECT COUNT(*) c FROM log_entries q $whereSql");
 $countStmt->execute($params);
 $count = (int) $countStmt->fetch()['c'];
 $pages = max(1, (int) ceil($count / $perPage));
 
-$sql = "SELECT q.*, c.name AS campaign, s.label AS smtp
-        FROM campaign_queue q
-        LEFT JOIN campaigns c ON c.id = q.campaign_id
+$sql = "$logEntriesSql
+        SELECT q.*, s.label AS smtp
+        FROM log_entries q
         LEFT JOIN smtp_accounts s ON s.id = q.smtp_id
-        $whereSql ORDER BY q.id DESC LIMIT $perPage OFFSET $offset";
+        $whereSql ORDER BY q.sent_at DESC,q.id DESC LIMIT $perPage OFFSET $offset";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $rows = $stmt->fetchAll();

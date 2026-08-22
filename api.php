@@ -6,6 +6,9 @@
 
 require_once __DIR__ . '/includes/bootstrap.php';
 require_once __DIR__ . '/includes/mailer.php';
+require_once __DIR__ . '/includes/inbox.php';
+require_once __DIR__ . '/includes/leads.php';
+require_once __DIR__ . '/includes/maps_scraper.php';
 
 require_login();
 csrf_check();
@@ -16,6 +19,47 @@ ignore_user_abort(true);
 
 $pdo    = db();
 $action = (string) query('action');
+
+/* ---------------------------------------------------------- Google Maps */
+
+if ($action === 'maps_health') {
+    json_out(maps_api_health());
+}
+
+if ($action === 'maps_list') {
+    json_out(maps_api_jobs());
+}
+
+if ($action === 'maps_start') {
+    $keywords = preg_split('/\R+/', (string) post('keywords')) ?: [];
+    $result = maps_api_start((string) post('name', 'Ayaya Maps lead search'), $keywords, (int) post('max_time', 600));
+    json_out($result, $result['ok'] ? 200 : 422);
+}
+
+if ($action === 'maps_job') {
+    $result = maps_api_job((string) post('job_id'));
+    json_out($result, $result['ok'] ? 200 : 422);
+}
+
+if ($action === 'maps_import') {
+    $jobId = (string) post('job_id');
+    $jobResult = maps_api_job($jobId);
+    if (!$jobResult['ok']) {
+        json_out($jobResult, 422);
+    }
+    $job = $jobResult['job'];
+    $status = strtolower((string) ($job['Status'] ?? $job['status'] ?? ''));
+    if ($status !== 'ok') {
+        json_out(['ok' => false, 'error' => 'This scrape is not complete yet. Its current status is ' . ($status ?: 'unknown') . '.'], 409);
+    }
+    $data = (array) ($job['Data'] ?? $job['data'] ?? []);
+    $emailExtraction = $data['email'] ?? $data['Email'] ?? false;
+    if (!$emailExtraction) {
+        json_out(['ok' => false, 'error' => 'This job was run with email extraction disabled, so its CSV has no public email data. Start a new scrape from the Ayaya Google Maps page; new jobs enable website email extraction automatically.'], 409);
+    }
+    $result = maps_import_job($jobId);
+    json_out(['ok' => $result['error'] === ''] + $result, $result['error'] === '' ? 200 : 422);
+}
 
 /* ------------------------------------------------------------- helpers */
 
@@ -36,7 +80,7 @@ function campaign_progress(PDO $pdo, int $id): array
             COUNT(*) total,
             SUM(CASE WHEN status='sent'   THEN 1 ELSE 0 END) sent,
             SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) failed,
-            SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) pending
+            SUM(CASE WHEN status IN ('pending','sending') THEN 1 ELSE 0 END) pending
         FROM campaign_queue WHERE campaign_id = ?");
     $stmt->execute([$id]);
     $r = $stmt->fetch();
@@ -65,10 +109,7 @@ function usable_accounts(PDO $pdo, array $ids): array
             continue;
         }
         if ((int) $acc['hourly_limit'] > 0) {
-            $stmt = $pdo->prepare("SELECT COUNT(*) c FROM campaign_queue
-                WHERE smtp_id = ? AND status = 'sent' AND sent_at >= datetime('now','-1 hour')");
-            $stmt->execute([(int) $acc['id']]);
-            if ((int) $stmt->fetch()['c'] >= (int) $acc['hourly_limit']) {
+            if (smtp_hourly_usage($pdo, (int) $acc['id']) >= (int) $acc['hourly_limit']) {
                 continue;
             }
         }
@@ -88,6 +129,14 @@ if ($action === 'test_smtp') {
     $res = smtp_test($acc, trim((string) post('test_to')));
     smtp_mark_tested($id, $res['ok'], $res['message']);
     json_out(['ok' => $res['ok'], 'message' => $res['message'], 'log' => $res['log']]);
+}
+
+if ($action === 'test_imap') {
+    $id = (int) post('id');
+    $res = inbox_test($id);
+    $pdo->prepare('UPDATE smtp_accounts SET last_imap_status=?,last_imap_tested=? WHERE id=?')
+        ->execute([($res['ok'] ? 'ok: ' : 'fail: ') . mb_substr($res['message'], 0, 300), utc_now(), $id]);
+    json_out($res);
 }
 
 if ($action === 'start_campaign') {
@@ -122,7 +171,7 @@ if ($action === 'start_campaign') {
     }
 
     $pdo->prepare("UPDATE campaigns SET status='running', started_at = COALESCE(started_at, ?), finished_at = NULL WHERE id = ?")
-        ->execute([date('Y-m-d H:i:s'), $id]);
+        ->execute([utc_now(), $id]);
     sync_campaign_counters($pdo, $id, $progress);
 
     json_out(['ok' => true, 'progress' => $progress, 'status' => 'running']);
@@ -162,7 +211,7 @@ if ($action === 'send_batch') {
     if (!$rows) {
         $progress = campaign_progress($pdo, $id);
         sync_campaign_counters($pdo, $id, $progress);
-        $pdo->prepare("UPDATE campaigns SET status='done', finished_at=? WHERE id=?")->execute([date('Y-m-d H:i:s'), $id]);
+        $pdo->prepare("UPDATE campaigns SET status='done', finished_at=? WHERE id=?")->execute([utc_now(), $id]);
         json_out(['ok' => true, 'done' => true, 'status' => 'done', 'results' => [], 'progress' => $progress]);
     }
 
@@ -172,19 +221,37 @@ if ($action === 'send_batch') {
     $abort   = '';   // set when the batch stops early (dead server, bad login, ...)
     $streak  = 0;    // consecutive failures
 
-    $markSent   = $pdo->prepare("UPDATE campaign_queue SET status='sent', error='', smtp_id=?, sent_at=? WHERE id=?");
-    $markFailed = $pdo->prepare("UPDATE campaign_queue SET status='failed', error=?, smtp_id=?, sent_at=? WHERE id=?");
+    $markSent   = $pdo->prepare("UPDATE campaign_queue SET status='sent', error='', smtp_id=?, sent_at=? WHERE id=? AND status='sending'");
+    $markFailed = $pdo->prepare("UPDATE campaign_queue SET status='failed', error=?, smtp_id=?, sent_at=? WHERE id=? AND status='sending'");
+    $releaseClaim = $pdo->prepare("UPDATE campaign_queue SET status='pending',error='',smtp_id=NULL,sent_at=NULL WHERE id=? AND status='sending'");
     $bumpSent   = $pdo->prepare('UPDATE smtp_accounts SET sent_count = sent_count + 1 WHERE id = ?');
 
     foreach ($rows as $i => $row) {
-        $account = $accounts[$cursor % count($accounts)];
-        $cursor++;
+        $account = null;
+        for ($attempt = 0; $attempt < count($accounts); $attempt++) {
+            $candidate = $accounts[$cursor % count($accounts)];
+            $cursor++;
+            if (smtp_claim_campaign_recipient($pdo, (int) $row['id'], $candidate)) {
+                $account = $candidate;
+                break;
+            }
+        }
+        if ($account === null) {
+            $state = $pdo->prepare('SELECT status FROM campaign_queue WHERE id=?');
+            $state->execute([(int) $row['id']]);
+            if ($state->fetchColumn() !== 'pending') {
+                continue;
+            }
+            $abort = 'All SMTP profiles reached their hourly limit or this recipient was claimed by another request.';
+            break;
+        }
         $accId = (int) $account['id'];
 
         if (!isset($mailers[$accId])) {
             try {
                 $mailers[$accId] = mailer_build($account, true);
             } catch (Throwable $e) {
+                $releaseClaim->execute([(int) $row['id']]);
                 $abort = 'SMTP setup failed for "' . $account['label'] . '": ' . $e->getMessage();
                 break;
             }
@@ -196,16 +263,17 @@ if ($action === 'send_batch') {
         // A dead server or a bad login is not the recipient's fault - leave the
         // address pending, stop the batch, and let the user fix the profile.
         if (!$res['ok'] && is_server_side_error($res['error'])) {
+            $releaseClaim->execute([(int) $row['id']]);
             $abort = 'Stopped on "' . $account['label'] . '": ' . $res['error'];
             break;
         }
 
         if ($res['ok']) {
-            $markSent->execute([$accId, date('Y-m-d H:i:s'), (int) $row['id']]);
+            $markSent->execute([$accId, utc_now(), (int) $row['id']]);
             $bumpSent->execute([$accId]);
             $streak = 0;
         } else {
-            $markFailed->execute([mb_substr($res['error'], 0, 500), $accId, date('Y-m-d H:i:s'), (int) $row['id']]);
+            $markFailed->execute([mb_substr($res['error'], 0, 500), $accId, utc_now(), (int) $row['id']]);
             $streak++;
         }
 
@@ -246,7 +314,7 @@ if ($action === 'send_batch') {
 
     $done = $progress['pending'] === 0;
     if ($done) {
-        $pdo->prepare("UPDATE campaigns SET status='done', finished_at=? WHERE id=?")->execute([date('Y-m-d H:i:s'), $id]);
+        $pdo->prepare("UPDATE campaigns SET status='done', finished_at=? WHERE id=?")->execute([utc_now(), $id]);
     }
 
     // Re-read: the user may have hit Pause while this batch was running.

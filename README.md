@@ -35,12 +35,19 @@ No Composer, no MySQL setup, no CDN. Drop it in `htdocs` and open it.
   Only real per-recipient rejections (550 and friends) are marked failed, and
   those can be retried in one click.
 - **Send logs** — searchable, filterable, exportable to CSV.
+- **AI Lead Finder** — uses the OpenAI Responses API with web search to discover
+  recently launched Nigerian businesses, match evidence against returned search
+  sources, score fit, and prepare an individual draft for human review. Approved
+  leads are sent one at a time.
+- **Replies Inbox** — synchronizes configured mailboxes over read-only IMAP,
+  displays incoming messages, and links replies back to matching Lead Finder leads.
 - **Password lock** — the whole app sits behind a single password.
 
 ## Requirements
 
 - XAMPP with **PHP 7.4+** (tested on PHP 8.2)
-- PHP extensions `pdo_sqlite` and `openssl` — both are on by default in XAMPP
+- PHP extensions `pdo_sqlite`, `openssl`, and `imap`
+- PHP extension `curl` and an OpenAI API key for Lead Finder
 - No database server needed: storage is a single SQLite file in `data/`
 
 ## Install
@@ -67,6 +74,80 @@ git clone https://github.com/<your-user>/ayaya-mailer.git
 4. On the campaign page, send yourself a **test**, then press **Start sending** and
    watch the console. Pause whenever you want; **Resume** picks up exactly where it
    stopped.
+
+## AI Lead Finder
+
+1. Open **Lead Finder** and save an OpenAI API key, sender name, Jojo Chat URL,
+   daily limit, and default SMTP profile.
+2. Run a search. OpenAI web research uses the configured launch-age window and
+   adds only leads whose launch and contact URLs occur in the API's returned web
+   sources, whose contact page belongs to the business domain, and whose fit score
+   is at least 60.
+3. Open each lead, verify both evidence links, edit the draft, tick the evidence
+   confirmation, and approve it. Editing an approved draft revokes its approval.
+4. Send the approved email individually. New leads are never sent automatically.
+
+Send claims and SMTP hourly slots are reserved atomically before delivery, so a
+double click or overlapping request cannot send the same lead twice. Daily limits
+use Lagos local-day boundaries, while timestamps are stored in UTC. Do-not-contact
+actions suppress both the email address and normalized business domain.
+
+For daily discovery without automatic sending, create a Windows Task Scheduler
+task that runs:
+
+```text
+C:\xampp\php\php.exe C:\xampp\htdocs\ayaya-mailer\scripts\discover-leads.php 5
+```
+
+The API key is encrypted in SQLite with `data/secret.key`. API usage is billed
+by OpenAI separately from a ChatGPT subscription.
+
+## Google Maps lead import
+
+Ayaya can import public business websites and email addresses from the local
+[gosom/google-maps-scraper](https://github.com/gosom/google-maps-scraper) service.
+The scraper is not bundled with Ayaya and remains local to your computer.
+
+1. Install [Git for Windows](https://git-scm.com/download/win), then clone the
+   scraper repository:
+
+   ```powershell
+   cd C:\tools
+   git clone https://github.com/gosom/google-maps-scraper.git
+   cd google-maps-scraper
+   ```
+
+2. Download the latest Windows release from the repository's Releases page and
+   start its Web UI on Ayaya's default port:
+
+   ```powershell
+   .\google_maps_scraper.exe -web -addr 127.0.0.1:8088 -data-folder gmapsdata
+   ```
+
+   Docker is also supported by the scraper project. Keep the service running
+   while searching from **Google Maps** in Ayaya.
+
+3. Open `http://localhost/ayaya-mailer/maps.php`. The default scraper URL is
+   `http://127.0.0.1:8088`; change it in the page if you use another port.
+4. Enter focused searches such as `media companies in Ajao Estate Lagos
+   Nigeria`, start a scrape, wait for it to finish, and import the results.
+
+Only rows with a valid website and public email are imported. Placeholder
+addresses are discarded, duplicates are skipped, and imported Maps leads stay
+unverified until you add dated launch evidence in **Lead Finder**. Review every
+result and honor opt-out requests before sending.
+
+## Replies Inbox
+
+1. Open **SMTP**, edit a sending profile, and enable **Replies inbox (IMAP)**.
+2. Enter the provider's IMAP host and port. Hostinger normally uses
+   `imap.hostinger.com`, port `993`, with SSL/TLS.
+3. Reuse the SMTP login when the sending address and receiving mailbox have the
+   same credentials, or enter separate IMAP credentials.
+4. Test the inbox connection, then open **Replies Inbox** and select **Sync inbox**.
+
+Inbox access is read-only. Messages are cached locally for viewing and locally
+marked read/unread; synchronization does not change their read state on the mail server.
 
 ### Recipient file format
 
