@@ -29,10 +29,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $insecure = post('allow_insecure') ? 1 : 0;
         $limit    = max(0, (int) post('hourly_limit', 0));
         $active   = post('is_active') ? 1 : 0;
+        $imapEnabled = post('imap_enabled') ? 1 : 0;
+        $imapHost = trim((string) post('imap_host'));
+        $imapPort = max(1, min(65535, (int) post('imap_port', 993)));
+        $imapEnc = (string) post('imap_encryption', 'ssl');
+        $imapUseSmtp = post('imap_use_smtp_credentials') ? 1 : 0;
+        $imapUsername = trim((string) post('imap_username'));
+        $imapPassword = (string) post('imap_password');
 
         if (!in_array($enc, ['none', 'ssl', 'tls'], true)) {
             $enc = 'tls';
         }
+        if (!in_array($imapEnc, ['none', 'ssl', 'tls'], true)) { $imapEnc = 'ssl'; }
 
         $errors = [];
         if ($label === '') { $errors[] = 'Give the profile a name.'; }
@@ -40,6 +48,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($port < 1 || $port > 65535) { $errors[] = 'Port must be between 1 and 65535.'; }
         if ($from !== '' && !filter_var($from, FILTER_VALIDATE_EMAIL)) { $errors[] = 'From address is not a valid email.'; }
         if ($replyTo !== '' && !filter_var($replyTo, FILTER_VALIDATE_EMAIL)) { $errors[] = 'Reply-To is not a valid email.'; }
+        if ($imapEnabled && ($imapHost === '' || !preg_match('/^[a-zA-Z0-9.-]+$/', $imapHost))) { $errors[] = 'A valid IMAP host is required when inbox sync is enabled.'; }
+        if ($imapEnabled && !$imapUseSmtp && $imapUsername === '') { $errors[] = 'Enter an IMAP username or reuse the SMTP credentials.'; }
 
         if ($errors) {
             flash(implode('<br>', array_map('e', $errors)), 'error');
@@ -63,8 +73,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 (label, host, port, encryption, username, password, from_email, from_name, reply_to, auth, allow_insecure, hourly_limit, is_active)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
             $stmt->execute([$label, $host, $port, $enc, $username, encrypt_secret($password), $from, $fromName, $replyTo, $auth, $insecure, $limit, $active]);
+            $id = (int) $pdo->lastInsertId();
             flash('SMTP profile <strong>' . e($label) . '</strong> saved. Send a test to make sure it works.');
         }
+        $imapSql = 'UPDATE smtp_accounts SET imap_enabled=?,imap_host=?,imap_port=?,imap_encryption=?,
+            imap_username=?,imap_use_smtp_credentials=?';
+        $imapValues = [$imapEnabled, $imapHost, $imapPort, $imapEnc, $imapUsername, $imapUseSmtp];
+        if ($imapPassword !== '') {
+            $imapSql .= ',imap_password=?';
+            $imapValues[] = encrypt_secret($imapPassword);
+        }
+        $imapSql .= ' WHERE id=?';
+        $imapValues[] = $id;
+        $pdo->prepare($imapSql)->execute($imapValues);
         redirect('smtp.php');
     }
 
@@ -127,9 +148,14 @@ layout_header('SMTP Profiles', 'smtp');
                 <td>
                   <span class="badge <?= $cls ?>" data-smtp-status="<?= (int) $a['id'] ?>" title="<?= e($status) ?>"><?= $txt ?></span>
                   <div class="small muted"><?= e(human_time($a['last_tested'])) ?></div>
+                  <?php if ($a['imap_enabled']): ?>
+                    <?php $imapOk = strpos((string) $a['last_imap_status'], 'ok:') === 0; ?>
+                    <div class="small" style="margin-top:5px"><span class="badge <?= $imapOk ? 'badge-ok' : ($a['last_imap_status'] ? 'badge-bad' : 'badge-muted') ?>" data-imap-status="<?= (int) $a['id'] ?>"><?= $imapOk ? 'IMAP ready' : ($a['last_imap_status'] ? 'IMAP failed' : 'IMAP') ?></span></div>
+                  <?php endif; ?>
                 </td>
                 <td class="right">
                   <button class="btn btn-sm" data-test-smtp="<?= (int) $a['id'] ?>" type="button">Test</button>
+                  <?php if ($a['imap_enabled']): ?><button class="btn btn-sm" data-test-imap="<?= (int) $a['id'] ?>" type="button">Test inbox</button><?php endif; ?>
                   <a class="btn btn-sm" href="smtp.php?edit=<?= (int) $a['id'] ?>">Edit</a>
                   <form method="post" style="display:inline">
                     <?= csrf_field() ?>
@@ -242,6 +268,29 @@ layout_header('SMTP Profiles', 'smtp');
         <input type="checkbox" name="allow_insecure" value="1" <?= !empty($edit['allow_insecure']) ? 'checked' : '' ?>>
         Skip TLS certificate verification (local relays / self-signed)
       </label>
+
+      <div style="border-top:1px solid var(--line);margin:18px 0;padding-top:16px">
+        <h2>Replies inbox (IMAP)</h2>
+        <p class="hint">Read-only access to replies received by this mailbox.</p>
+        <label class="check">
+          <input type="checkbox" name="imap_enabled" value="1" <?= !empty($edit['imap_enabled']) ? 'checked' : '' ?>>
+          Enable this profile in the Inbox
+        </label>
+        <div class="row">
+          <label class="field" style="flex:2 1 170px"><span>IMAP host</span><input type="text" name="imap_host" placeholder="imap.hostinger.com" value="<?= e($edit['imap_host'] ?? '') ?>"></label>
+          <label class="field" style="flex:0 1 90px"><span>Port</span><input type="number" name="imap_port" value="<?= (int) ($edit['imap_port'] ?? 993) ?>"></label>
+        </div>
+        <label class="field"><span>Encryption</span><select name="imap_encryption">
+          <?php foreach (['ssl' => 'SSL/TLS (993)', 'tls' => 'STARTTLS (143)', 'none' => 'None'] as $k => $v): ?>
+            <option value="<?= $k ?>" <?= ($edit['imap_encryption'] ?? 'ssl') === $k ? 'selected' : '' ?>><?= $v ?></option>
+          <?php endforeach; ?>
+        </select></label>
+        <label class="check"><input type="checkbox" name="imap_use_smtp_credentials" value="1" <?= ($edit === null || !empty($edit['imap_use_smtp_credentials'])) ? 'checked' : '' ?>> Reuse SMTP username and password</label>
+        <div class="row">
+          <label class="field"><span>Separate IMAP username (optional)</span><input type="text" name="imap_username" value="<?= e($edit['imap_username'] ?? '') ?>"></label>
+          <label class="field"><span>Separate IMAP password <?= $edit ? '<em class="muted">(leave blank to keep)</em>' : '' ?></span><input type="password" name="imap_password" autocomplete="new-password"></label>
+        </div>
+      </div>
 
       <div class="row mt16">
         <button class="btn btn-primary" type="submit"><?= $edit ? 'Save changes' : 'Add profile' ?></button>

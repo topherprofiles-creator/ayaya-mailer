@@ -197,11 +197,41 @@ function render_placeholders(string $text, array $contact): string
         '{{name}}'       => $name !== '' ? $name : $first,
         '{{first_name}}' => $first,
         '{{extra}}'      => (string) ($contact['extra'] ?? ''),
-        '{{date}}'       => date('Y-m-d'),
-        '{{time}}'       => date('H:i'),
+        '{{date}}'       => app_local_time('Y-m-d'),
+        '{{time}}'       => app_local_time('H:i'),
     ];
 
     return str_replace(array_keys($map), array_values($map), $text);
+}
+
+function utc_now(): string
+{
+    return gmdate('Y-m-d H:i:s');
+}
+
+function app_timezone(): DateTimeZone
+{
+    try {
+        return new DateTimeZone(setting('app_timezone', 'Africa/Lagos'));
+    } catch (Throwable $e) {
+        return new DateTimeZone('Africa/Lagos');
+    }
+}
+
+function app_local_time(string $format, ?string $utcTime = null): string
+{
+    try {
+        $time = new DateTimeImmutable($utcTime ?: 'now', new DateTimeZone('UTC'));
+        return $time->setTimezone(app_timezone())->format($format);
+    } catch (Throwable $e) {
+        return $utcTime ?: '';
+    }
+}
+
+function utc_local_day_start(): string
+{
+    $localMidnight = (new DateTimeImmutable('now', app_timezone()))->setTime(0, 0, 0);
+    return $localMidnight->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
 }
 
 function human_time(?string $sqlTime): string
@@ -209,8 +239,7 @@ function human_time(?string $sqlTime): string
     if (!$sqlTime) {
         return '-';
     }
-    $ts = strtotime($sqlTime);
-    return $ts ? date('d M Y, H:i', $ts) : $sqlTime;
+    return app_local_time('d M Y, H:i', $sqlTime);
 }
 
 function bytes_human(int $bytes): string

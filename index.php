@@ -11,18 +11,26 @@ $smtpActive    = (int) $pdo->query('SELECT COUNT(*) c FROM smtp_accounts WHERE i
 $listCount     = (int) $pdo->query('SELECT COUNT(*) c FROM mail_lists')->fetch()['c'];
 $contactCount  = (int) $pdo->query('SELECT COUNT(*) c FROM list_contacts')->fetch()['c'];
 $campaignCount = (int) $pdo->query('SELECT COUNT(*) c FROM campaigns')->fetch()['c'];
+$leadCount     = (int) $pdo->query('SELECT COUNT(*) c FROM outreach_leads')->fetch()['c'];
+$leadReview    = (int) $pdo->query("SELECT COUNT(*) c FROM outreach_leads WHERE status='new'")->fetch()['c'];
 
 $totals = $pdo->query("SELECT
         SUM(CASE WHEN status = 'sent'   THEN 1 ELSE 0 END) sent,
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) failed
     FROM campaign_queue")->fetch();
-$sent   = (int) ($totals['sent'] ?? 0);
-$failed = (int) ($totals['failed'] ?? 0);
+$leadTotals = $pdo->query("SELECT
+        SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) sent,
+        SUM(CASE WHEN last_error<>'' THEN 1 ELSE 0 END) failed
+    FROM outreach_leads")->fetch();
+$sent   = (int) ($totals['sent'] ?? 0) + (int) ($leadTotals['sent'] ?? 0);
+$failed = (int) ($totals['failed'] ?? 0) + (int) ($leadTotals['failed'] ?? 0);
 
 $recent = $pdo->query('SELECT * FROM campaigns ORDER BY id DESC LIMIT 6')->fetchAll();
-$last24 = (int) $pdo->query("SELECT COUNT(*) c FROM campaign_queue WHERE status = 'sent' AND sent_at >= datetime('now','-1 day')")->fetch()['c'];
+$last24Campaign = (int) $pdo->query("SELECT COUNT(*) c FROM campaign_queue WHERE status='sent' AND sent_at >= datetime('now','-1 day')")->fetch()['c'];
+$last24Leads = (int) $pdo->query("SELECT COUNT(*) c FROM outreach_leads WHERE status='sent' AND sent_at >= datetime('now','-1 day')")->fetch()['c'];
+$last24 = $last24Campaign + $last24Leads;
 
-$TOPBAR = '<a class="btn btn-primary" href="campaign.php">New campaign</a>';
+$TOPBAR = '<a class="btn" href="leadfinder.php">Find leads</a><a class="btn btn-primary" href="campaign.php">New campaign</a>';
 
 layout_header('Dashboard', 'dashboard');
 ?>
@@ -37,6 +45,11 @@ layout_header('Dashboard', 'dashboard');
     <div class="label">Contacts</div>
     <div class="value"><?= number_format($contactCount) ?></div>
     <div class="small muted">in <?= $listCount ?> list<?= $listCount === 1 ? '' : 's' ?></div>
+  </div>
+  <div class="stat accent">
+    <div class="label">Outreach leads</div>
+    <div class="value"><?= number_format($leadCount) ?></div>
+    <div class="small muted"><?= number_format($leadReview) ?> waiting for review</div>
   </div>
   <div class="stat ok">
     <div class="label">Emails sent</div>
