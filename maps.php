@@ -8,7 +8,13 @@ require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_check();
-    if ((string) post('action') === 'save_maps_settings') {
+    $action = (string) post('action');
+    if ($action === 'install_maps_scraper') {
+        $result = maps_install_local_scraper();
+        flash($result['ok'] ? $result['message'] : $result['error'], $result['ok'] ? 'success' : 'error');
+        redirect('maps.php');
+    }
+    if ($action === 'save_maps_settings') {
         $url = rtrim(trim((string) post('maps_api_url')), '/');
         if (!filter_var($url, FILTER_VALIDATE_URL) || !in_array(strtolower((string) parse_url($url, PHP_URL_SCHEME)), ['http', 'https'], true)) {
             flash('Enter a valid scraper API URL, for example http://127.0.0.1:8088.', 'error');
@@ -36,6 +42,7 @@ function maps_page_value(array $job, string $key): string
 }
 
 $health = maps_api_health();
+$managedScraperInstalled = is_file(maps_managed_binary());
 $jobsResult = maps_api_jobs();
 $jobs = $jobsResult['jobs'];
 $TOPBAR = '<a class="btn" href="leadfinder.php">Lead Finder</a><a class="btn" href="' . e(maps_api_url() . '/api/docs') . '" target="_blank" rel="noopener noreferrer">Scraper API docs</a>';
@@ -45,7 +52,7 @@ layout_header('Google Maps Leads', 'maps');
 
 <div id="maps-tool" data-api-url="<?= e(maps_api_url()) ?>">
   <?php if (!$health['ok']): ?>
-    <div class="alert alert-error"><strong>Google Maps scraper is offline.</strong> <?= e($health['error'] ?: 'Start the local scraper on port 8088, then refresh this page.') ?> <a href="#maps-setup">See installation steps</a>.</div>
+    <div class="alert alert-error"><strong>Google Maps scraper is offline.</strong> <?= e($health['error'] ?: 'Install and start the local scraper below.') ?> <a href="#maps-setup">Set it up automatically</a>.</div>
   <?php else: ?>
     <div class="alert alert-success">Google Maps scraper connected at <code><?= e(maps_api_url()) ?></code>. Searches run only when you press Start scrape.</div>
   <?php endif; ?>
@@ -113,20 +120,26 @@ new Nigerian startups in Abuja Nigeria</textarea></label>
         <p class="small muted mb0">The scraper’s API and its results stay on this computer. Review every address and honor opt-out requests before sending.</p>
       </div>
       <div class="panel" id="maps-setup">
-        <h2>Install the local scraper</h2>
-        <p class="hint">Ayaya connects to the scraper; it does not bundle Google Maps scraping. Install the free open-source repository separately, start its local Web UI, then enter that URL below.</p>
-        <ol class="small" style="padding-left:20px">
-          <li>Install <a href="https://git-scm.com/download/win" target="_blank" rel="noopener noreferrer">Git for Windows</a>, then clone the repository:</li>
-        </ol>
-        <pre class="mono small" style="white-space:pre-wrap;margin:8px 0 14px">git clone https://github.com/gosom/google-maps-scraper.git
-cd google-maps-scraper</pre>
-        <p class="small mb0"><strong>Windows binary (simplest):</strong> download the latest <code>google_maps_scraper-*-windows-amd64.exe</code> from the repository’s <a href="https://github.com/gosom/google-maps-scraper/releases" target="_blank" rel="noopener noreferrer">Releases</a> page, place it in the cloned folder, and run:</p>
-        <pre class="mono small" style="white-space:pre-wrap;margin:8px 0 14px">google_maps_scraper.exe -web -addr 127.0.0.1:8088 -data-folder gmapsdata</pre>
-        <p class="small mb0"><strong>Docker alternative:</strong></p>
-        <pre class="mono small" style="white-space:pre-wrap;margin:8px 0 14px">docker run --rm -p 127.0.0.1:8088:8080 \
+        <h2>Google Maps setup</h2>
+        <p class="hint">On Windows, Ayaya can download the latest verified Google Maps scraper release into its private data folder and start it for you. No Git, Docker, or separate repository install is needed.</p>
+        <form method="post" class="mb16">
+          <?= csrf_field() ?>
+          <input type="hidden" name="action" value="install_maps_scraper">
+          <button class="btn btn-primary" type="submit"><?= $managedScraperInstalled ? 'Start scraper automatically' : 'Install and start scraper automatically' ?></button>
+          <span class="small muted" style="margin-left:8px">Downloads about 60 MB the first time.</span>
+        </form>
+        <p class="small muted">The downloaded release is SHA-256 checked before Ayaya starts it. The scraper runs only on <code>127.0.0.1:8088</code> and its data stays under Ayaya’s ignored <code>data/</code> folder.</p>
+        <details class="small">
+          <summary>Manual or Docker setup</summary>
+          <p>Use the free open-source <a href="https://github.com/gosom/google-maps-scraper" target="_blank" rel="noopener noreferrer">gosom/google-maps-scraper</a> project if automatic setup is unavailable:</p>
+          <pre class="mono small" style="white-space:pre-wrap;margin:8px 0 14px">git clone https://github.com/gosom/google-maps-scraper.git
+cd google-maps-scraper
+google_maps_scraper.exe -web -addr 127.0.0.1:8088 -data-folder gmapsdata</pre>
+          <p class="small mb0">Docker alternative:</p>
+          <pre class="mono small" style="white-space:pre-wrap;margin:8px 0 14px">docker run --rm -p 127.0.0.1:8088:8080 \
   -v "${PWD}/gmapsdata:/gmapsdata" \
   gosom/google-maps-scraper -data-folder /gmapsdata</pre>
-        <p class="small muted mb0">Leave the scraper running, set the connection URL below to <code>http://127.0.0.1:8088</code>, and refresh this page. Open <a href="https://github.com/gosom/google-maps-scraper" target="_blank" rel="noopener noreferrer">the repository guide</a> for advanced proxy and search options.</p>
+        </details>
       </div>
       <div class="panel">
         <h2>Next step</h2>
