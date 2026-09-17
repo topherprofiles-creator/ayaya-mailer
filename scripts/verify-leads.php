@@ -42,7 +42,7 @@ $schema = lead_discovery_schema();
 if (($schema['properties']['leads']['type'] ?? '') !== 'array') {
     $failures[] = 'Lead discovery JSON schema is invalid.';
 }
-if (($schema['properties']['leads']['maxItems'] ?? 0) !== 10) {
+if (($schema['properties']['leads']['maxItems'] ?? 0) !== 50) {
     $failures[] = 'Lead discovery schema does not cap returned leads.';
 }
 $leadFields = $schema['properties']['leads']['items']['properties'] ?? [];

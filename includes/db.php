@@ -267,10 +267,10 @@ function db_init(): void
         setting_set('openai_model', 'gpt-5.6-luna');
     }
     if (setting('lead_daily_send_limit', '') === '') {
-        setting_set('lead_daily_send_limit', '10');
+        setting_set('lead_daily_send_limit', '100');
     }
     if (setting('lead_default_count', '') === '') {
-        setting_set('lead_default_count', '5');
+        setting_set('lead_default_count', '50');
     }
     if (setting('lead_recency_days', '') === '') {
         setting_set('lead_recency_days', '365');

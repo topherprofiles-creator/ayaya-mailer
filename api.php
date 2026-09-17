@@ -61,6 +61,26 @@ if ($action === 'maps_import') {
     json_out(['ok' => $result['error'] === ''] + $result, $result['error'] === '' ? 200 : 422);
 }
 
+if ($action === 'inbox_sync') {
+    if (!inbox_available()) {
+        json_out(['ok' => false, 'error' => 'PHP IMAP is not enabled.'], 422);
+    }
+    $accounts = $pdo->query('SELECT id FROM smtp_accounts WHERE is_active=1 AND imap_enabled=1 ORDER BY id')->fetchAll();
+    $added = $matched = $bounced = 0;
+    $errors = [];
+    foreach ($accounts as $account) {
+        try {
+            $result = inbox_sync_account((int) $account['id'], 25);
+            $added += $result['added'];
+            $matched += $result['matched'];
+            $bounced += $result['bounced'];
+        } catch (Throwable $e) {
+            $errors[] = $e->getMessage();
+        }
+    }
+    json_out(['ok' => !$errors, 'added' => $added, 'matched' => $matched, 'bounced' => $bounced, 'error' => implode(' | ', $errors)], $errors ? 422 : 200);
+}
+
 /* ------------------------------------------------------------- helpers */
 
 function campaign_or_fail(PDO $pdo, int $id): array

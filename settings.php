@@ -28,8 +28,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $model = trim((string) post('openai_model', 'gpt-5.6-luna'));
         $sender = trim((string) post('lead_sender_name', 'Jojo Chat AI Team'));
         $productUrl = lead_clean_url((string) post('lead_product_url'));
-        $dailyLimit = max(1, min(100, (int) post('lead_daily_send_limit', 10)));
-        $defaultCount = max(1, min(10, (int) post('lead_default_count', 5)));
+        $dailyLimit = max(1, min(100, (int) post('lead_daily_send_limit', 100)));
+        $defaultCount = max(1, min(50, (int) post('lead_default_count', 50)));
         $recencyDays = max(1, min(365, (int) post('lead_recency_days', 365)));
         $smtpId = max(0, (int) post('lead_default_smtp_id', 0));
 
@@ -99,7 +99,7 @@ $sqlite   = extension_loaded('pdo_sqlite') ? 'yes' : 'no';
 $curl     = extension_loaded('curl') ? 'yes' : 'no';
 $smtps    = smtp_all(true);
 $hasKey   = openai_api_key() !== '';
-$dailyLimit = max(1, (int) setting('lead_daily_send_limit', '10'));
+$dailyLimit = max(1, (int) setting('lead_daily_send_limit', '100'));
 
 layout_header('Settings', 'settings');
 ?>
@@ -174,7 +174,7 @@ layout_header('Settings', 'settings');
             <label class="field"><span>Sender name</span><input type="text" name="lead_sender_name" value="<?= e(setting('lead_sender_name', 'Jojo Chat AI Team')) ?>"></label>
             <label class="field"><span>Jojo Chat URL</span><input type="url" name="lead_product_url" value="<?= e(setting('lead_product_url', 'https://jojochatai.com')) ?>"></label>
             <div class="row">
-              <label class="field"><span>Default leads per search</span><input type="number" name="lead_default_count" min="1" max="10" value="<?= (int) setting('lead_default_count', '5') ?>"></label>
+              <label class="field"><span>Default leads per search</span><input type="number" name="lead_default_count" min="1" max="50" value="<?= (int) setting('lead_default_count', '50') ?>"></label>
               <label class="field"><span>Business launched within days</span><input type="number" name="lead_recency_days" min="1" max="365" value="<?= (int) setting('lead_recency_days', '365') ?>"><small class="muted">365 is recommended.</small></label>
               <label class="field"><span>Maximum sends per day</span><input type="number" name="lead_daily_send_limit" min="1" max="100" value="<?= $dailyLimit ?>"></label>
             </div>

@@ -419,6 +419,9 @@ function maps_import_job(string $jobId): array
             $category = maps_row_value($row, ['category', 'industry']);
             $location = lead_format_source_location(maps_row_value($row, ['complete_address', 'address'])) ?: 'Nigeria';
             $summary = maps_row_value($row, ['descriptions', 'about']);
+            if ($summary !== '' && ($summary[0] === '[' || $summary[0] === '{') && json_decode($summary, true) !== null) {
+                $summary = '';
+            }
             if ($name === '' || $website === '' || !$emails) {
                 if ($website === '') { $missingWebsite++; }
                 if (!$emails) { $missingEmail++; }

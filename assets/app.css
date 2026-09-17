@@ -259,6 +259,9 @@ td.wrap, th.wrap { white-space: normal; }
   text-transform: uppercase; letter-spacing: .45px; font-size: 10.5px;
 }
 .send-lead-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.row.tight > .send-lead-form-unverified { flex: 1 1 100%; }
+.send-lead-form-unverified .alert { flex: 1 1 100%; margin: 0; }
+.send-lead-form-unverified .check { flex: 1 1 100%; }
 @media (max-width: 560px) {
   .lead-grid { grid-template-columns: 1fr; }
 }

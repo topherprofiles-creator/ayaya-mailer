@@ -131,3 +131,17 @@ layout_header('Replies Inbox', 'inbox');
 </div>
 
 <?php layout_footer(); ?>
+<?php if (inbox_available() && $enabledAccounts > 0): ?>
+<script>
+(() => {
+  const csrf = document.querySelector('meta[name="csrf"]').content;
+  const sync = () => {
+    const body = new FormData();
+    body.append('csrf', csrf);
+    fetch('api.php?action=inbox_sync', { method: 'POST', body, headers: { 'X-CSRF-Token': csrf } })
+      .finally(() => window.setTimeout(() => window.location.reload(), 1000));
+  };
+  window.setTimeout(sync, 1000);
+})();
+</script>
+<?php endif; ?>

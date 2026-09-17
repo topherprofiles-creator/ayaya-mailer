@@ -175,6 +175,31 @@ function inbox_match_lead(PDO $pdo, string $fromEmail, string $inReplyTo): ?int
     return null;
 }
 
+function inbox_is_hard_bounce(string $fromEmail, string $subject, string $body): bool
+{
+    $fromEmail = strtolower($fromEmail);
+    $text = strtolower($subject . "\n" . $body);
+    $isMailer = str_contains($fromEmail, 'mailer-daemon') || str_contains($fromEmail, 'postmaster')
+        || str_contains($subject, 'delivery status') || str_contains($subject, 'undelivered')
+        || str_contains($subject, 'returned mail');
+    $hardFailure = preg_match('/(user unknown|no such user|mailbox (?:is )?unavailable|address not found|recipient address rejected|does not exist|550[ -]5\.1\.1|554[ -]5\.0\.0)/i', $text) === 1;
+    return $isMailer && $hardFailure;
+}
+
+function inbox_match_bounce_recipient(PDO $pdo, string $body): ?int
+{
+    if (!preg_match_all('/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/i', $body, $matches)) {
+        return null;
+    }
+    $find = $pdo->prepare("SELECT id FROM outreach_leads WHERE email=? COLLATE NOCASE AND status IN ('sent','suppressed') ORDER BY sent_at DESC LIMIT 1");
+    foreach (array_unique($matches[0]) as $email) {
+        $find->execute([strtolower($email)]);
+        $id = $find->fetchColumn();
+        if ($id) { return (int) $id; }
+    }
+    return null;
+}
+
 /** @return array{scanned:int,added:int,matched:int} */
 function inbox_sync_account(int $smtpId, int $limit = 100): array
 {
@@ -184,7 +209,7 @@ function inbox_sync_account(int $smtpId, int $limit = 100): array
     $account = $stmt->fetch();
     if (!$account) { throw new RuntimeException('Active mail profile not found.'); }
     $imap = inbox_connect($account);
-    $scanned = $added = $matched = 0;
+    $scanned = $added = $matched = $bounced = 0;
     try {
         $uids = imap_search($imap, 'ALL', SE_UID) ?: [];
         rsort($uids, SORT_NUMERIC);
@@ -202,17 +227,33 @@ function inbox_sync_account(int $smtpId, int $limit = 100): array
             if (!$item) { continue; }
             [$fromEmail, $fromName] = inbox_sender((string) ($item->from ?? ''));
             $inReplyTo = trim((string) ($item->in_reply_to ?? ''));
+            $subject = inbox_decode_header((string) ($item->subject ?? '(no subject)'));
+            $body = inbox_message_body($imap, (int) $uid);
             $leadId = inbox_match_lead($pdo, $fromEmail, $inReplyTo);
+            $isHardBounce = inbox_is_hard_bounce($fromEmail, $subject, $body);
+            if ($isHardBounce && $leadId === null) {
+                $leadId = inbox_match_bounce_recipient($pdo, $body);
+            }
             $received = !empty($item->udate) ? gmdate('Y-m-d H:i:s', (int) $item->udate) : utc_now();
             $insert->execute([
                 $smtpId, (int) $uid, trim((string) ($item->message_id ?? '')), $inReplyTo,
-                $fromEmail, $fromName, inbox_decode_header((string) ($item->subject ?? '(no subject)')),
-                inbox_message_body($imap, (int) $uid), $received, $leadId, utc_now(),
+                $fromEmail, $fromName, $subject, $body, $received, $leadId, utc_now(),
             ]);
             if ($insert->rowCount() === 1) {
                 $added++;
                 if ($leadId !== null) {
-                    lead_event($leadId, 'reply_received', 'Reply received from ' . $fromEmail);
+                    if ($isHardBounce) {
+                        $lead = lead_find($leadId);
+                        if ($lead) {
+                            $pdo->prepare("UPDATE outreach_leads SET status='suppressed',updated_at=?,last_error=? WHERE id=? AND status NOT IN ('sending')")
+                                ->execute([utc_now(), 'Hard delivery bounce received.', $leadId]);
+                            lead_suppress((string) $lead['email'], (string) $lead['website'], 'Hard delivery bounce received');
+                            lead_event($leadId, 'bounced', 'Hard delivery bounce received; email and business domain suppressed');
+                            $bounced++;
+                        }
+                    } else {
+                        lead_event($leadId, 'reply_received', 'Reply received from ' . $fromEmail);
+                    }
                     $matched++;
                 }
             }
@@ -220,7 +261,7 @@ function inbox_sync_account(int $smtpId, int $limit = 100): array
     } finally {
         imap_close($imap);
     }
-    return ['scanned' => $scanned, 'added' => $added, 'matched' => $matched];
+    return ['scanned' => $scanned, 'added' => $added, 'matched' => $matched, 'bounced' => $bounced];
 }
 
 function inbox_test(int $smtpId): array

@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'discover') {
         try {
             $result = discover_nigerian_leads(
-                (int) post('count', setting('lead_default_count', '5')),
+                (int) post('count', setting('lead_default_count', '50')),
                 trim((string) post('search_query'))
             );
             if ($result['found'] === 0) {
@@ -133,7 +133,7 @@ layout_header('Lead Finder', 'leads');
         <div class="row">
           <label class="field" style="flex:0 1 150px">
             <span>Number of leads</span>
-            <input type="number" name="count" min="1" max="10" value="<?= (int) setting('lead_default_count', '5') ?>">
+            <input type="number" name="count" min="1" max="50" value="<?= (int) setting('lead_default_count', '50') ?>">
           </label>
           <label class="field" style="flex:3 1 320px">
             <span>Optional focus</span>

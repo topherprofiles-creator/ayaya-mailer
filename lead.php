@@ -87,7 +87,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'send') {
         $smtpId = (int) post('smtp_id', setting('lead_default_smtp_id', '0'));
-        $result = lead_send_now($id, $smtpId);
+        $allowUnverified = post('unverified_override_confirm') === '1';
+        if ($allowUnverified && (string) $lead['status'] !== 'new') {
+            flash('The unverified-send override is available only for leads awaiting review.', 'error');
+            redirect('lead.php?id=' . $id);
+        }
+        $result = lead_send_now($id, $smtpId, $allowUnverified);
         if ($result['ok']) {
             flash('Email sent individually to <strong>' . e((string) $lead['email']) . '</strong>.');
         } else {
@@ -165,7 +170,20 @@ layout_header('Review Lead', 'leads');
               <button class="btn btn-primary" type="submit">Approve this lead</button>
             </form>
           <?php elseif ($lead['status'] !== 'approved'): ?>
-            <div class="alert alert-warn">This lead predates auditable API-source matching. Run discovery again to refresh its evidence before approval.</div>
+            <form method="post" class="send-lead-form send-lead-form-unverified">
+              <?= csrf_field() ?>
+              <input type="hidden" name="action" value="send">
+              <input type="hidden" name="id" value="<?= $id ?>">
+              <div class="alert alert-warn">This lead is unverified. You can still send it manually, but the launch and contact evidence have not been approved.</div>
+              <select name="smtp_id" required style="width:auto;min-width:210px">
+                <option value="">Choose SMTP profile</option>
+                <?php foreach ($smtps as $smtp): ?>
+                  <option value="<?= (int) $smtp['id'] ?>" <?= $defaultSmtp === (int) $smtp['id'] ? 'selected' : '' ?>><?= e($smtp['label']) ?></option>
+                <?php endforeach; ?>
+              </select>
+              <label class="check" style="margin:10px 0"><input type="checkbox" name="unverified_override_confirm" value="1" required> I understand this lead is unverified and want to send this one email anyway.</label>
+              <button class="btn btn-primary" type="submit" data-confirm="Send one email to <?= e($lead['email']) ?> without verified evidence?">Send unverified lead</button>
+            </form>
           <?php else: ?>
             <form method="post" class="send-lead-form">
               <?= csrf_field() ?>
@@ -189,7 +207,7 @@ layout_header('Review Lead', 'leads');
   <div>
     <div class="panel">
       <h2>Research evidence</h2>
-      <p class="small"><?= e($lead['summary']) ?></p>
+      <p class="small"><?= e(lead_display_summary((string) $lead['summary'])) ?></p>
       <p class="small"><strong>Why it fits:</strong><br><?= e($lead['fit_reason']) ?></p>
       <div class="lead-meta">
         <div><span>Lead source</span><strong><?= e($leadSource) ?></strong></div>

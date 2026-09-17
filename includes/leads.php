@@ -155,19 +155,21 @@ function lead_launch_date_is_recent(string $launchDate, int $recencyDays, ?strin
     return false;
 }
 
-function lead_validation_errors(array $lead): array
+function lead_validation_errors(array $lead, bool $requireResearchEvidence = true): array
 {
     $errors = [];
     if (trim((string) ($lead['business_name'] ?? '')) === '') { $errors[] = 'Business name is required.'; }
     if (!filter_var((string) ($lead['email'] ?? ''), FILTER_VALIDATE_EMAIL)) { $errors[] = 'A valid public business email is required.'; }
     if (lead_clean_url((string) ($lead['website'] ?? '')) === '') { $errors[] = 'A valid website is required.'; }
-    $referenceDate = substr((string) ($lead['discovered_at'] ?? date('Y-m-d')), 0, 10);
-    if (!lead_launch_date_is_recent((string) ($lead['launch_date'] ?? ''), (int) setting('lead_recency_days', '365'), $referenceDate)) {
-        $errors[] = 'A verified recent business launch date is required.';
-    }
     if (trim((string) ($lead['subject'] ?? '')) === '') { $errors[] = 'Email subject is required.'; }
     if (trim((string) ($lead['body'] ?? '')) === '') { $errors[] = 'Email body is required.'; }
-    if (empty($lead['source_verified'])) { $errors[] = 'The API research sources were not verified.'; }
+    if ($requireResearchEvidence) {
+        $referenceDate = substr((string) ($lead['discovered_at'] ?? date('Y-m-d')), 0, 10);
+        if (!lead_launch_date_is_recent((string) ($lead['launch_date'] ?? ''), (int) setting('lead_recency_days', '365'), $referenceDate)) {
+            $errors[] = 'A verified recent business launch date is required.';
+        }
+        if (empty($lead['source_verified'])) { $errors[] = 'The API research sources were not verified.'; }
+    }
     return $errors;
 }
 
@@ -198,6 +200,18 @@ function lead_enforce_product_url(string $body, ?string $productUrl = null): str
         $body .= ($body === '' ? '' : "\n\n") . $productUrl;
     }
     return $body;
+}
+
+function lead_display_summary(string $summary): string
+{
+    $summary = trim($summary);
+    if ($summary === '') {
+        return 'No business description was provided.';
+    }
+    if (($summary[0] === '[' || $summary[0] === '{') && json_decode($summary, true) !== null) {
+        return 'No business description was provided.';
+    }
+    return $summary;
 }
 
 function lead_sync_product_urls(PDO $pdo): int
@@ -323,7 +337,7 @@ function lead_discovery_schema(): array
         'properties'           => [
             'leads' => [
                 'type'  => 'array',
-                'maxItems' => 10,
+                'maxItems' => 50,
                 'items' => [
                     'type'                 => 'object',
                     'additionalProperties' => false,
@@ -354,7 +368,7 @@ function discover_nigerian_leads(int $count, string $searchQuery = ''): array
 
 function discover_nigerian_leads_unlocked(int $count, string $searchQuery = ''): array
 {
-    $count = max(1, min(10, $count));
+    $count = max(1, min(50, $count));
     $searchQuery = trim($searchQuery);
     $pdo = db();
     lead_backfill_domains($pdo);
@@ -595,7 +609,7 @@ function lead_daily_reserved_count(PDO $pdo): int
 /**
  * @return array{ok:bool,error:string}
  */
-function lead_send_now(int $leadId, int $smtpId): array
+function lead_send_now(int $leadId, int $smtpId, bool $allowUnverified = false): array
 {
     require_once __DIR__ . '/mailer.php';
 
@@ -612,14 +626,16 @@ function lead_send_now(int $leadId, int $smtpId): array
         if (!$lead) {
             throw new RuntimeException('Lead not found.');
         }
-        if ((string) $lead['status'] !== 'approved') {
+        $priorStatus = (string) $lead['status'];
+        $canSend = $priorStatus === 'approved' || ($allowUnverified && $priorStatus === 'new');
+        if (!$canSend) {
             throw new RuntimeException('This lead is not available to send. It may already be sending or sent.');
         }
-        $validation = lead_validation_errors($lead);
+        $validation = lead_validation_errors($lead, !$allowUnverified);
         if ($validation) {
             throw new RuntimeException(implode(' ', $validation));
         }
-        if (empty($lead['evidence_verified'])) {
+        if (!$allowUnverified && empty($lead['evidence_verified'])) {
             throw new RuntimeException('Verify the launch and contact evidence before sending.');
         }
         $domain = (string) ($lead['website_domain'] ?: lead_domain_from_url((string) $lead['website']));
@@ -645,8 +661,8 @@ function lead_send_now(int $leadId, int $smtpId): array
 
         $now = utc_now();
         $claim = $pdo->prepare("UPDATE outreach_leads SET status='sending',smtp_id=?,sent_at=?,updated_at=?,last_error=''
-            WHERE id=? AND status='approved'");
-        $claim->execute([$smtpId, $now, $now, $leadId]);
+            WHERE id=? AND status=?");
+        $claim->execute([$smtpId, $now, $now, $leadId, $priorStatus]);
         if ($claim->rowCount() !== 1) {
             throw new RuntimeException('This lead was claimed by another send request.');
         }
@@ -683,13 +699,13 @@ function lead_send_now(int $leadId, int $smtpId): array
             WHERE id=? AND status='sending'")
             ->execute([(string) ($result['message_id'] ?? ''), utc_now(), utc_now(), $leadId]);
         $pdo->prepare('UPDATE smtp_accounts SET sent_count = sent_count + 1 WHERE id = ?')->execute([$smtpId]);
-        lead_event($leadId, 'sent', 'Sent through SMTP profile ' . (string) $account['label']);
+        lead_event($leadId, 'sent', ($allowUnverified ? 'Sent without evidence verification through SMTP profile ' : 'Sent through SMTP profile ') . (string) $account['label']);
         return ['ok' => true, 'error' => ''];
     }
 
-    $pdo->prepare("UPDATE outreach_leads SET status='approved',sent_at=NULL,last_error=?,updated_at=?
+    $pdo->prepare("UPDATE outreach_leads SET status=?,sent_at=NULL,last_error=?,updated_at=?
         WHERE id=? AND status='sending'")
-        ->execute([mb_substr((string) $result['error'], 0, 2000), utc_now(), $leadId]);
+        ->execute([$priorStatus, mb_substr((string) $result['error'], 0, 2000), utc_now(), $leadId]);
     lead_event($leadId, 'send_failed', 'SMTP profile ' . (string) $account['label'] . ': ' . (string) $result['error']);
     return ['ok' => false, 'error' => (string) $result['error']];
 }
